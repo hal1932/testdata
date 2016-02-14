@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Collections.Generic;
 using System.Data;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using MySql.Data.MySqlClient;
 
@@ -47,13 +48,12 @@ using (var conn = new MySqlConnection("server=localhost;uid=user;pwd=password;da
     conn.Open();
 
     NonQuery(conn, "START TRANSACTION");
-    try
-    {
-        NonQuery(conn, "DROP TABLE IF EXISTS `model_texture_maps`");
-        NonQuery(conn, "DROP TABLE IF EXISTS `models`");
-        NonQuery(conn, "DROP TABLE IF EXISTS `textures`");
 
-        NonQuery(conn, @"
+    NonQuery(conn, "DROP TABLE IF EXISTS `model_texture_maps`");
+    NonQuery(conn, "DROP TABLE IF EXISTS `models`");
+    NonQuery(conn, "DROP TABLE IF EXISTS `textures`");
+
+    NonQuery(conn, @"
 CREATE TABLE `test`.`models` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(64) NOT NULL,
@@ -65,7 +65,7 @@ CREATE TABLE `test`.`models` (
   UNIQUE INDEX `model_filepath_UNIQUE` (`filepath` ASC)
 );");
 
-        NonQuery(conn, @"
+    NonQuery(conn, @"
 CREATE TABLE `test`.`textures` (
   `id` INT NOT NULL AUTO_INCREMENT,
   `name` VARCHAR(64) NOT NULL,
@@ -77,7 +77,7 @@ CREATE TABLE `test`.`textures` (
   UNIQUE INDEX `texture_filepath_UNIQUE` (`filepath` ASC)
 );");
 
-        NonQuery(conn, @"
+    NonQuery(conn, @"
 CREATE TABLE `model_texture_maps` (
   `model_id` int(11) NOT NULL,
   `texture_id` int(11) NOT NULL,
@@ -87,57 +87,60 @@ CREATE TABLE `model_texture_maps` (
   CONSTRAINT `texture_id` FOREIGN KEY (`texture_id`) REFERENCES `textures` (`id`) ON DELETE CASCADE ON UPDATE CASCADE
 );");
 
-        foreach (Model model in models)
+    NonQuery(conn, "COMMIT");
+}
+
+//foreach (Model model in models)
+Parallel.ForEach(models, (model) =>
+{
+    using (var conn = new MySqlConnection("server=localhost;uid=user;pwd=password;database=test"))
+    {
+        conn.Open();
+        NonQuery(conn, "START TRANSACTION");
+
+        Console.WriteLine(model.File.Name);
+
+        var name = Path.GetFileNameWithoutExtension(model.File.Name);
+        var filepath = CalcRelativePath(model.File.FullName, cResourceRoot);
+        var created = CalcDateTimeStr(model.File.CreationTime);
+        var lastUpdated = CalcDateTimeStr(model.File.LastWriteTime);
+
+        var query = string.Format(
+            @"INSERT INTO `models`" +
+            @"  (`name`, `filepath`, `created`, `last_updated`)" +
+            @"  values ('{0}', '{1}', '{2}', '{3}')",
+            name, filepath, created, lastUpdated);
+        NonQuery(conn, query);
+        var modelId = QueryScalar(conn, "SELECT LAST_INSERT_ID()");
+
+        foreach (var tex in model.Textures)
         {
-            Console.WriteLine(model.File.Name);
+            name = Path.GetFileNameWithoutExtension(tex.Name);
+            filepath = CalcRelativePath(tex.FullName, cResourceRoot);
+            created = CalcDateTimeStr(tex.CreationTime);
+            lastUpdated = CalcDateTimeStr(tex.LastWriteTime);
 
-            var name = Path.GetFileNameWithoutExtension(model.File.Name);
-            var filepath = CalcRelativePath(model.File.FullName, cResourceRoot);
-            var created = CalcDateTimeStr(model.File.CreationTime);
-            var lastUpdated = CalcDateTimeStr(model.File.LastWriteTime);
-
-            var query = string.Format(
-                @"INSERT INTO `models`" +
+            query = string.Format(
+                @"INSERT IGNORE INTO `textures`" +
                 @"  (`name`, `filepath`, `created`, `last_updated`)" +
                 @"  values ('{0}', '{1}', '{2}', '{3}')",
                 name, filepath, created, lastUpdated);
+
+            var texId = (NonQuery(conn, query) == 1) ?
+                QueryScalar(conn, "SELECT LAST_INSERT_ID()")
+                : QueryScalar(conn, string.Format("select `id` from `textures` where `name` = '{0}'", name));
+
+            query = string.Format(
+                @"INSERT INTO `model_texture_maps`" +
+                @"  (`model_id`, `texture_id`)" +
+                @"  values ({0}, {1})",
+                modelId, texId);
             NonQuery(conn, query);
-            var modelId = QueryScalar(conn, "SELECT LAST_INSERT_ID()");
-
-            foreach (var tex in model.Textures)
-            {
-                name = Path.GetFileNameWithoutExtension(tex.Name);
-                filepath = CalcRelativePath(tex.FullName, cResourceRoot);
-                created = CalcDateTimeStr(tex.CreationTime);
-                lastUpdated = CalcDateTimeStr(tex.LastWriteTime);
-
-                query = string.Format(
-                    @"INSERT IGNORE INTO `textures`" +
-                    @"  (`name`, `filepath`, `created`, `last_updated`)" +
-                    @"  values ('{0}', '{1}', '{2}', '{3}')",
-                    name, filepath, created, lastUpdated);
-
-                var texId = (NonQuery(conn, query) == 1) ?
-                    QueryScalar(conn, "SELECT LAST_INSERT_ID()")
-                    : QueryScalar(conn, string.Format("select `id` from `textures` where `name` = '{0}'", name));
-
-                query = string.Format(
-                    @"INSERT INTO `model_texture_maps`" +
-                    @"  (`model_id`, `texture_id`)" +
-                    @"  values ({0}, {1})",
-                    modelId, texId);
-                NonQuery(conn, query);
-            }
         }
+
+        NonQuery(conn, "COMMIT");
     }
-    catch (Exception e)
-    {
-        NonQuery(conn, "ROLLBACK");
-        Console.WriteLine(e);
-        return;
-    }
-    NonQuery(conn, "COMMIT");
-}
+});
 
 List<Dictionary<string, object>> Query(MySqlConnection conn, string query)
 {
