@@ -3,66 +3,78 @@
 using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 
 var rootDir = CreateDirectory(Path.Combine("resources"));
 var modelRootDir = CreateDirectory(Path.Combine(rootDir.FullName, "models"));
 
-const int cModelCount = 1000;
-const int cTextureCountPerModel = 5;
-const int cCommonTextureCountPerModel = 3;
+const int cModelCount = 10000;
+const int cCommonTextureCount = 300;
+var cTextureCountPerModel = new KeyValuePair<int, int>(3, 7);
+var cCommonTextureCountPerModel = new KeyValuePair<int, int>(0, 3);
 
 var modelDic = new Dictionary<FileInfo, List<FileInfo>>();
+var rand = new Random(1234567890);
+
+var lockObj = new object();
 
 // モデル、個別テクスチャ
-for (var i = 0; i < cModelCount; ++i)
+Parallel.For(0, cModelCount, (i) =>
 {
     // mdl
     var name = "model" + i.ToString("D4");
     var dir = CreateDirectory(Path.Combine(modelRootDir.FullName, name));
 
     var modelfile = new FileInfo(Path.Combine(dir.FullName, name) + ".mdl");
-    modelfile.OpenWrite()
-        .Close();
+    modelfile.OpenWrite().Close();
 
     // tex
     var textures = new List<FileInfo>();
     var texdir = CreateDirectory(Path.Combine(dir.FullName, "textures"));
-    for (var j = 0; j < cTextureCountPerModel; ++j)
+    var texCount = rand.Next(cTextureCountPerModel.Key, cTextureCountPerModel.Value);
+    for (var j = 0; j < texCount; ++j)
     {
         var texname = name + "_" + j.ToString("D2") + ".tex";
         var texpath = Path.Combine(texdir.FullName, texname);
         var texfile = new FileInfo(texpath);
-        texfile.OpenWrite()
-            .Close();
+        texfile.OpenWrite().Close();
+
         textures.Add(texfile);
     }
-    modelDic[modelfile] = textures;
-}
+
+    lock(lockObj)
+    {
+        modelDic[modelfile] = textures;
+    }
+});
 
 // 共通テクスチャ
 var commonDir = Path.Combine(modelRootDir.FullName, "common");
 var commonTexDir = CreateDirectory(Path.Combine(commonDir, "textures"));
 var commonTextures = new List<FileInfo>();
-for (var i = 0; i < 50; ++i)
+Parallel.For(0, cCommonTextureCount, (i) =>
 {
     var tex = new FileInfo(Path.Combine(commonTexDir.FullName, "common" + i.ToString("D4") + ".tex"));
-    tex.OpenWrite()
-        .Close();
-    commonTextures.Add(tex);
-}
-var rand = new Random(1234567890);
-foreach (var item in modelDic)
+    tex.OpenWrite().Close();
+
+    lock(lockObj)
+    {
+        commonTextures.Add(tex);
+    }
+});
+Parallel.ForEach(modelDic, (item) =>
 {
-    for (var i = 0; i < cCommonTextureCountPerModel; ++i)
+    var texCount = rand.Next(cCommonTextureCountPerModel.Key, cCommonTextureCountPerModel.Value);
+    for (var i = 0; i < texCount; ++i)
     {
         var texIdx = rand.Next(commonTextures.Count);
         item.Value.Add(commonTextures[texIdx]);
     }
-}
+});
 
 // モデル定義ファイル
-foreach (var item in modelDic)
+Parallel.ForEach(modelDic, (item) =>
 {
     var model = item.Key;
     var textures = item.Value;
@@ -83,7 +95,7 @@ foreach (var item in modelDic)
     }
 
     xml.Save(defPath);
-}
+});
 
 DirectoryInfo CreateDirectory(string path)
 {
@@ -103,3 +115,4 @@ string CalcRelativePath(string path, string root)
         .MakeRelativeUri(new Uri(path));
     return relativeUrl.ToString();
 }
+
