@@ -253,7 +253,7 @@ CREATE TABLE `shop_item_maps` (
                     @"INSERT INTO `items`" +
                     @"  (`name`, `type_id`)" +
                     @"  values ('{0}', {1})",
-                    "shop" + i.ToString("D4"), rand.Next(cItemTypeCount));
+                    "item" + i.ToString("D4"), rand.Next(cItemTypeCount));
                 NonQuery(conn, query);
 
                 itemId = (ulong)QueryScalar(conn, "SELECT LAST_INSERT_ID()");
